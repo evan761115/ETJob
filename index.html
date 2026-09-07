@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>專題方向產生器｜ETtoday星光雲</title>
+<style>
+  :root{
+    --navy:#0f1b33;
+    --navy-2:#16233f;
+    --gold:#d4a24c;
+    --gold-2:#e8bc70;
+    --red:#c0392b;
+    --bg:#f4f5f7;
+    --card:#ffffff;
+    --line:#e4e6ea;
+    --text:#1c2333;
+    --text-dim:#6b7280;
+    --green:#2f9e6e;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    line-height:1.6;
+  }
+  header{
+    background:linear-gradient(135deg,var(--navy) 0%,var(--navy-2) 100%);
+    color:#fff;
+    padding:28px 20px 24px;
+    border-bottom:4px solid var(--gold);
+  }
+  header .wrap{max-width:920px;margin:0 auto;}
+  header .eyebrow{
+    display:inline-block;
+    font-size:12px;
+    letter-spacing:2px;
+    color:var(--gold-2);
+    background:rgba(212,162,76,0.12);
+    border:1px solid rgba(212,162,76,0.4);
+    padding:3px 10px;
+    border-radius:999px;
+    margin-bottom:10px;
+  }
+  header h1{margin:0 0 6px;font-size:24px;font-weight:700;}
+  header p{margin:0;color:#b9c0d4;font-size:14px;}
+
+  main{max-width:920px;margin:0 auto;padding:24px 20px 60px;}
+
+  .card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:20px;
+    margin-bottom:20px;
+    box-shadow:0 1px 3px rgba(15,27,51,0.04);
+  }
+  .card h2{
+    font-size:15px;
+    margin:0 0 14px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    color:var(--navy);
+  }
+  .card h2 .num{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:20px;height:20px;border-radius:50%;
+    background:var(--navy);color:#fff;font-size:11px;font-weight:700;
+  }
+
+  details.settings{margin-bottom:20px;}
+  details.settings summary{
+    cursor:pointer;
+    font-size:13px;
+    color:var(--text-dim);
+    padding:10px 4px;
+    list-style:none;
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  details.settings summary::-webkit-details-marker{display:none;}
+  details.settings summary::before{content:"⚙";font-size:14px;}
+  details.settings .card{margin-top:6px;}
+
+  label{display:block;font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px;}
+  .hint{font-size:12px;color:var(--text-dim);margin-top:6px;}
+  input[type=text], textarea{
+    width:100%;
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:10px 12px;
+    font-size:14px;
+    font-family:inherit;
+    color:var(--text);
+    background:#fafbfc;
+  }
+  input[type=text]:focus, textarea:focus{
+    outline:none;border-color:var(--navy);background:#fff;
+  }
+  textarea{resize:vertical;min-height:56px;}
+
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;}
+  .row > div{flex:1;min-width:200px;}
+
+  button{
+    font-family:inherit;
+    font-size:14px;
+    font-weight:600;
+    border:none;
+    border-radius:8px;
+    padding:10px 18px;
+    cursor:pointer;
+    transition:transform .05s ease, opacity .15s ease;
+  }
+  button:active{transform:scale(0.98);}
+  button.primary{background:var(--navy);color:#fff;}
+  button.primary:hover{background:var(--navy-2);}
+  button.secondary{background:#eef0f4;color:var(--navy);}
+  button.secondary:hover{background:#e3e6ec;}
+  button.ghost{background:transparent;color:var(--text-dim);border:1px solid var(--line);}
+  button:disabled{opacity:0.55;cursor:not-allowed;}
+
+  .status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#c8ccd4;margin-right:6px;}
+  .status-dot.ok{background:var(--green);}
+  .status-dot.bad{background:var(--red);}
+  .status-line{font-size:12px;color:var(--text-dim);margin-top:8px;}
+
+  .input-block{margin-bottom:14px;}
+
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;}
+
+  .msg{
+    padding:12px 14px;border-radius:10px;font-size:13px;margin-bottom:16px;
+    display:none;
+  }
+  .msg.show{display:block;}
+  .msg.error{background:#fdecea;color:#8a2f24;border:1px solid #f3c6bf;}
+  .msg.info{background:#eef2fb;color:#2a3c66;border:1px solid #cdd8f2;}
+
+  .loading{display:none;align-items:center;gap:10px;color:var(--text-dim);font-size:13px;padding:6px 0 16px;}
+  .loading.show{display:flex;}
+  .spinner{
+    width:16px;height:16px;border-radius:50%;
+    border:2px solid #d7dbe3;border-top-color:var(--navy);
+    animation:spin .7s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  #results{display:none;}
+  #results.show{display:block;}
+
+  .section-title{
+    font-size:16px;font-weight:700;color:var(--navy);
+    margin:28px 0 12px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .section-title .badge{
+    font-size:11px;font-weight:700;background:var(--gold);color:#3a2a08;
+    padding:2px 9px;border-radius:999px;
+  }
+
+  .article-card{
+    background:var(--card);border:1px solid var(--line);border-left:4px solid var(--navy);
+    border-radius:10px;padding:16px 18px;margin-bottom:12px;
+  }
+  .article-card .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px;}
+  .article-card h3{margin:0;font-size:15.5px;color:var(--text);flex:1;}
+  .type-tag{
+    flex-shrink:0;font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;
+    background:#eef0f4;color:var(--navy);white-space:nowrap;
+  }
+  .type-tag.comment{background:#fdecea;color:var(--red);}
+  .type-tag.summary{background:#e8f3ec;color:var(--green);}
+  .article-card p.angle{margin:0;font-size:13.5px;color:var(--text-dim);}
+
+  .directions-list{
+    background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:6px 18px;
+  }
+  .directions-list li{padding:10px 0;font-size:14px;border-bottom:1px dashed var(--line);}
+  .directions-list li:last-child{border-bottom:none;}
+
+  .toolbar{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;}
+
+  .disclaimer{
+    background:#fff8e8;border:1px solid #f0dfae;color:#7a5c14;
+    border-radius:10px;padding:10px 14px;font-size:12.5px;margin-bottom:16px;
+  }
+
+  .article-toggle{
+    background:transparent;border:1px solid var(--line);color:var(--navy);
+    font-size:12.5px;font-weight:600;padding:6px 12px;border-radius:8px;margin-top:4px;
+  }
+  .article-toggle:hover{background:#f2f4f8;}
+
+  .article-body{
+    display:none;
+    margin-top:14px;
+    padding-top:14px;
+    border-top:1px dashed var(--line);
+  }
+  .article-body.show{display:block;}
+  .article-body .lead{
+    font-size:14px;color:var(--text);margin:0 0 14px;
+    font-weight:600;
+    background:#f7f8fa;border-radius:8px;padding:10px 12px;
+  }
+  .article-body .section{margin-bottom:12px;}
+  .article-body .section h4{
+    font-size:13.5px;color:var(--navy);margin:0 0 4px;
+    border-left:3px solid var(--gold);padding-left:8px;
+  }
+  .article-body .section p{margin:0;font-size:13.5px;color:var(--text);}
+
+  .headline-block{margin-top:16px;}
+  .headline-block h4{
+    font-size:13px;color:var(--text-dim);margin:0 0 8px;
+    text-transform:none;
+  }
+  .headline-group{margin-bottom:10px;}
+  .headline-group .group-label{
+    font-size:11px;font-weight:700;color:var(--gold);
+    text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;display:block;
+  }
+  .headline-item{
+    display:flex;justify-content:space-between;align-items:center;gap:8px;
+    font-size:13.5px;padding:7px 10px;border-radius:8px;background:#f7f8fa;margin-bottom:6px;
+  }
+  .headline-item span.txt{flex:1;}
+  .headline-item span.len{font-size:11px;color:var(--text-dim);flex-shrink:0;}
+  .headline-copy{
+    flex-shrink:0;background:transparent;border:1px solid var(--line);color:var(--text-dim);
+    font-size:11px;padding:3px 8px;border-radius:6px;
+  }
+  .headline-copy:hover{background:#eef0f4;color:var(--navy);}
+
+  .source-line{font-size:11.5px;color:var(--text-dim);margin-top:10px;}
+
+  footer{max-width:920px;margin:0 auto;padding:0 20px 40px;color:var(--text-dim);font-size:12px;text-align:center;}
+
+  .copy-toast{
+    position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    background:var(--navy);color:#fff;padding:10px 18px;border-radius:999px;
+    font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s ease;
+  }
+  .copy-toast.show{opacity:1;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <span class="eyebrow">ETTODAY 星光雲・編輯台工具</span>
+    <h1>專題方向產生器</h1>
+    <p>輸入熱事件，一鍵產出稿件方向、新聞稿草稿與 SEO 標題建議，加快組員發想與寫稿速度。</p>
+  </div>
+</header>
+
+<main>
+
+  <details class="settings">
+    <summary>後端服務設定（首次使用請先設定）</summary>
+    <div class="card">
+      <h2><span class="num">1</span>後端服務網址</h2>
+      <div class="input-block">
+        <label for="backendUrl">Backend API URL</label>
+        <input type="text" id="backendUrl" placeholder="例如：https://your-backend.onrender.com">
+        <p class="hint">請填入你部署的後端服務網址（不含結尾斜線）。此網址僅在目前這個瀏覽器分頁中生效，重新整理頁面後需要重新輸入；若要永久預設，請直接修改 index.html 內的 <code>DEFAULT_BACKEND_URL</code>。</p>
+      </div>
+      <div class="actions">
+        <button class="primary" id="saveUrlBtn">套用此網址</button>
+        <button class="ghost" id="testConnBtn">測試連線</button>
+      </div>
+      <div class="status-line" id="connStatus"><span class="status-dot"></span>尚未測試連線</div>
+    </div>
+  </details>
+
+  <div class="card">
+    <h2><span class="num">2</span>輸入熱事件</h2>
+    <div class="input-block">
+      <label for="eventInput">熱事件 / 關鍵字</label>
+      <textarea id="eventInput" placeholder="例如：吳宗憲離婚　／　陸劇逐玉　／　胡瓜節目綜藝大集合收攤"></textarea>
+    </div>
+    <div class="actions">
+      <button class="primary" id="generateBtn">產生專題方向</button>
+      <button class="secondary" id="demoBtn">看範例（不需後端）</button>
+    </div>
+  </div>
+
+  <div class="msg error" id="errorMsg"></div>
+  <div class="msg info" id="infoMsg"></div>
+  <div class="loading" id="loadingRow"><div class="spinner"></div>思考中，正在產生專題方向與稿件建議…</div>
+
+  <div id="results">
+    <div class="disclaimer">
+      ⚠️ 以下新聞稿草稿與標題，是 AI 依維基百科等公開資料整理、改寫後的初稿，僅供組員發想與加速寫稿使用。
+      正式刊登前請記者務必查證最新資訊、補充當事人／官方回應，並以自己的文字重新編寫，勿直接照登或照抄來源原文。
+    </div>
+    <div class="section-title">建議稿件方向與新聞稿草稿 <span class="badge" id="articleCount">0 則</span></div>
+    <div id="articlesWrap"></div>
+
+    <div class="section-title">更多延伸出稿方向 <span class="badge" id="moreCount">0 則</span></div>
+    <ul class="directions-list" id="moreWrap"></ul>
+
+    <div class="toolbar">
+      <button class="ghost" id="copyBtn">複製全部內容</button>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  Internal Tool for ETtoday 星光雲・僅供內部編輯台使用
+</footer>
+
+<div class="copy-toast" id="copyToast">已複製到剪貼簿</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ====== 設定區：部署到 GitHub Pages 後，可直接把你的後端網址填在這裡當作預設值 ======
+  var DEFAULT_BACKEND_URL = ""; // 例如："https://your-backend.onrender.com"
+  // ==================================================================================
+
+  var backendUrl = DEFAULT_BACKEND_URL;
+
+  var $ = function(id){ return document.getElementById(id); };
+
+  var backendInput = $("backendUrl");
+  backendInput.value = DEFAULT_BACKEND_URL;
+
+  var connStatus = $("connStatus");
+  var errorMsg = $("errorMsg");
+  var infoMsg = $("infoMsg");
+  var loadingRow = $("loadingRow");
+  var results = $("results");
+  var articlesWrap = $("articlesWrap");
+  var moreWrap = $("moreWrap");
+  var articleCount = $("articleCount");
+  var moreCount = $("moreCount");
+  var copyToast = $("copyToast");
+
+  function hideMsgs(){
+    errorMsg.classList.remove("show");
+    infoMsg.classList.remove("show");
+  }
+  function showError(text){
+    hideMsgs();
+    errorMsg.textContent = text;
+    errorMsg.classList.add("show");
+  }
+  function showInfo(text){
+    hideMsgs();
+    infoMsg.textContent = text;
+    infoMsg.classList.add("show");
+  }
+
+  function setConnStatus(state, text){
+    var dot = connStatus.querySelector(".status-dot");
+    dot.className = "status-dot" + (state === "ok" ? " ok" : state === "bad" ? " bad" : "");
+    while (connStatus.childNodes.length > 1) connStatus.removeChild(connStatus.lastChild);
+    connStatus.appendChild(document.createTextNode(text));
+  }
+
+  $("saveUrlBtn").addEventListener("click", function(){
+    var v = backendInput.value.trim().replace(/\/+$/,"");
+    backendUrl = v;
+    if (v) {
+      showInfo("已套用後端網址（僅本次瀏覽有效）：" + v);
+    } else {
+      showInfo("已清空後端網址。");
+    }
+  });
+
+  $("testConnBtn").addEventListener("click", function(){
+    var v = (backendInput.value || "").trim().replace(/\/+$/,"");
+    if (!v) {
+      setConnStatus("bad", "尚未輸入網址");
+      return;
+    }
+    backendUrl = v;
+    setConnStatus("", "測試中…");
+    fetch(v + "/health", { method: "GET" })
+      .then(function(res){
+        if (res.ok) {
+          setConnStatus("ok", "連線成功");
+        } else {
+          setConnStatus("bad", "連線失敗（狀態碼 " + res.status + "）");
+        }
+      })
+      .catch(function(){
+        setConnStatus("bad", "連線失敗，請確認後端網址是否正確、後端是否已啟動，以及 CORS 設定");
+      });
+  });
+
+  function copyPlainText(text){
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand("copy"); } catch(e) {}
+    document.body.removeChild(ta);
+    copyToast.classList.add("show");
+    setTimeout(function(){ copyToast.classList.remove("show"); }, 1600);
+  }
+
+  function renderResults(data){
+    var articles = (data && data.articles) || [];
+    var more = (data && data.moreDirections) || [];
+
+    articleCount.textContent = articles.length + " 則";
+    moreCount.textContent = more.length + " 則";
+
+    articlesWrap.innerHTML = "";
+    articles.forEach(function(a, idx){
+      var card = document.createElement("div");
+      card.className = "article-card";
+
+      var top = document.createElement("div");
+      top.className = "top";
+
+      var h3 = document.createElement("h3");
+      h3.textContent = a.title || "（未命名方向）";
+
+      var tag = document.createElement("span");
+      var typeText = a.type || "專題";
+      tag.className = "type-tag" + (/評論|觀點|分析/.test(typeText) ? " comment" : /懶人包|整理/.test(typeText) ? " summary" : "");
+      tag.textContent = typeText;
+
+      top.appendChild(h3);
+      top.appendChild(tag);
+
+      var p = document.createElement("p");
+      p.className = "angle";
+      p.textContent = a.angle || a.summary || "";
+
+      card.appendChild(top);
+      card.appendChild(p);
+
+      var hasBody = a.body && (a.body.lead || (a.body.sections && a.body.sections.length));
+      var hasHeadlines = a.headlines && a.headlines.length;
+
+      if (hasBody || hasHeadlines) {
+        var toggleBtn = document.createElement("button");
+        toggleBtn.className = "article-toggle";
+        toggleBtn.type = "button";
+        toggleBtn.textContent = "展開新聞稿草稿與標題建議 ▾";
+
+        var bodyWrap = document.createElement("div");
+        bodyWrap.className = "article-body";
+
+        if (hasBody) {
+          if (a.body.lead) {
+            var lead = document.createElement("p");
+            lead.className = "lead";
+            lead.textContent = a.body.lead;
+            bodyWrap.appendChild(lead);
+          }
+          (a.body.sections || []).forEach(function(sec){
+            var secDiv = document.createElement("div");
+            secDiv.className = "section";
+            var h4 = document.createElement("h4");
+            h4.textContent = sec.heading || "";
+            var pp = document.createElement("p");
+            pp.textContent = sec.content || "";
+            secDiv.appendChild(h4);
+            secDiv.appendChild(pp);
+            bodyWrap.appendChild(secDiv);
+          });
+        }
+
+        if (hasHeadlines) {
+          var hBlock = document.createElement("div");
+          hBlock.className = "headline-block";
+          var hTitle = document.createElement("h4");
+          hTitle.textContent = "SEO 建議標題（ETtoday 風格，共 " + a.headlines.length + " 則）";
+          hBlock.appendChild(hTitle);
+
+          var shortGroup = document.createElement("div");
+          shortGroup.className = "headline-group";
+          var shortLabel = document.createElement("span");
+          shortLabel.className = "group-label";
+          shortLabel.textContent = "短標（約15字）";
+          shortGroup.appendChild(shortLabel);
+
+          var longGroup = document.createElement("div");
+          longGroup.className = "headline-group";
+          var longLabel = document.createElement("span");
+          longLabel.className = "group-label";
+          longLabel.textContent = "長標（約25字）";
+          longGroup.appendChild(longLabel);
+
+          a.headlines.forEach(function(h){
+            var text = typeof h === "string" ? h : (h.text || "");
+            var len = typeof h === "string" ? "" : (h.length || "");
+            var item = document.createElement("div");
+            item.className = "headline-item";
+            var span = document.createElement("span");
+            span.className = "txt";
+            span.textContent = text;
+            var lenSpan = document.createElement("span");
+            lenSpan.className = "len";
+            lenSpan.textContent = text.length + "字";
+            var copyBtnEl = document.createElement("button");
+            copyBtnEl.className = "headline-copy";
+            copyBtnEl.type = "button";
+            copyBtnEl.textContent = "複製";
+            copyBtnEl.addEventListener("click", function(){ copyPlainText(text); });
+            item.appendChild(span);
+            item.appendChild(lenSpan);
+            item.appendChild(copyBtnEl);
+            (len === "long" ? longGroup : shortGroup).appendChild(item);
+          });
+
+          hBlock.appendChild(shortGroup);
+          hBlock.appendChild(longGroup);
+          bodyWrap.appendChild(hBlock);
+        }
+
+        toggleBtn.addEventListener("click", function(){
+          var willShow = !bodyWrap.classList.contains("show");
+          bodyWrap.classList.toggle("show", willShow);
+          toggleBtn.textContent = willShow ? "收合新聞稿草稿與標題建議 ▴" : "展開新聞稿草稿與標題建議 ▾";
+        });
+
+        card.appendChild(toggleBtn);
+        card.appendChild(bodyWrap);
+      }
+
+      articlesWrap.appendChild(card);
+    });
+
+    moreWrap.innerHTML = "";
+    more.forEach(function(m){
+      var li = document.createElement("li");
+      li.textContent = m;
+      moreWrap.appendChild(li);
+    });
+
+    if (data && data.wikipedia && data.wikipedia.length) {
+      var srcLine = document.createElement("div");
+      srcLine.className = "source-line";
+      srcLine.textContent = "參考資料來源：" + data.wikipedia.map(function(w){ return w.title; }).join("、") + "（維基百科）";
+      articlesWrap.appendChild(srcLine);
+    }
+
+    results.classList.add("show");
+  }
+
+  function buildCopyText(event, data){
+    var lines = [];
+    lines.push("【專題方向產生器】" + event);
+    lines.push("");
+    lines.push("■ 建議稿件方向與新聞稿草稿");
+    (data.articles || []).forEach(function(a, i){
+      lines.push((i+1) + ". [" + (a.type||"") + "] " + a.title);
+      if (a.angle || a.summary) lines.push("   切角：" + (a.angle || a.summary));
+      if (a.body) {
+        if (a.body.lead) lines.push("   導言：" + a.body.lead);
+        (a.body.sections || []).forEach(function(sec){
+          lines.push("   ▸ " + (sec.heading || "") );
+          lines.push("     " + (sec.content || ""));
+        });
+      }
+      if (a.headlines && a.headlines.length) {
+        lines.push("   SEO建議標題：");
+        a.headlines.forEach(function(h){
+          var text = typeof h === "string" ? h : (h.text || "");
+          var len = typeof h === "string" ? "" : (h.length || "");
+          lines.push("     - [" + (len === "long" ? "長標" : "短標") + "] " + text);
+        });
+      }
+      lines.push("");
+    });
+    lines.push("■ 更多延伸出稿方向");
+    (data.moreDirections || []).forEach(function(m, i){
+      lines.push((i+1) + ". " + m);
+    });
+    if (data.wikipedia && data.wikipedia.length) {
+      lines.push("");
+      lines.push("參考資料來源：" + data.wikipedia.map(function(w){ return w.title; }).join("、") + "（維基百科）");
+    }
+    return lines.join("\n");
+  }
+
+  var lastEvent = "";
+  var lastData = null;
+
+  $("copyBtn").addEventListener("click", function(){
+    if (!lastData) return;
+    copyPlainText(buildCopyText(lastEvent, lastData));
+  });
+
+  function DEMO_DATA(event){
+    var map = {
+      "吳宗憲離婚": {
+        articles: [
+          { title: "吳宗憲離婚事件懶人包", type: "懶人包", angle: "整理事件時間軸：何時結婚、何時傳出離婚、雙方回應內容、目前狀態一次看" },
+          { title: "吳宗憲過往婚姻與感情整理", type: "整理稿", angle: "梳理歷任婚姻與感情對象、交往過程與公開發言，做成年表方便讀者查閱" },
+          { title: "吳宗憲為何要自己公開這件事？", type: "評論稿", angle: "從公眾人物形象管理角度分析主動公開的考量：搶先定調輿論、保護子女、圈內生態觀察" }
+        ],
+        moreDirections: [
+          "圈內好友、合作藝人對此事的反應整理",
+          "吳宗憲近期工作行程是否受影響",
+          "過往主持功力與親身經歷如何影響其談話性節目風格",
+          "網友與鄉民論壇的正反評價蒐集",
+          "同類型藝人離婚公開方式比較（誰選擇沉默、誰選擇說明）",
+          "子女教養安排與後續受訪可能性追蹤",
+          "經紀公司/合作品牌方是否有回應或聲明"
+        ]
+      },
+      "陸劇逐玉": {
+        articles: [
+          { title: "《逐玉》在紅什麼？亮點與播放量整理", type: "整理稿", angle: "劇情賣點、話題度來源、各平台播放量與排行榜表現一次看" },
+          { title: "男女主角爆紅，過往作品整理", type: "整理稿", angle: "主要演員代表作品年表、討論度變化、素人到爆紅的關鍵作品" },
+          { title: "《逐玉》劇中彩蛋大公開", type: "懶人包", angle: "整理劇迷討論度高的細節彩蛋、伏筆與原著/前作呼應之處" }
+        ],
+        moreDirections: [
+          "原著小說與劇版改編差異比較",
+          "劇中服裝造型與美術設計話題整理",
+          "主題曲/配樂話題與歌手訪談角度",
+          "台灣觀眾追劇熱度與社群討論聲量分析",
+          "編劇/導演訪談角度：創作理念與選角過程",
+          "劇中經典台詞與名場面整理",
+          "後續劇情發展預測與網友猜測整理"
+        ]
+      },
+      "胡瓜節目綜藝大集合收攤": {
+        articles: [
+          { title: "《綜藝大集合》20年收攤懶人包", type: "懶人包", angle: "整理節目開播時間、經典單元、收視高峰與如今收攤原因" },
+          { title: "胡瓜年近70為何仍堅持外景通告？錄影甘苦談整理", type: "整理稿", angle: "彙整胡瓜過往受訪談論拍攝辛苦（日曬雨淋、體力負荷）的內容，呈現資深藝人的敬業態度" },
+          { title: "《綜藝大集合》存在的意義是什麼？", type: "評論稿", angle: "從陪伴長輩、地方文化推廣、傳統綜藝式微角度切入，討論節目收攤對台灣綜藝生態的意義" }
+        ],
+        moreDirections: [
+          "歷年單元主持搭檔與班底整理",
+          "曾造訪過的偏鄉地點與在地產業回顧",
+          "同類型外景節目消失現況觀察（台灣綜藝環境變化）",
+          "胡瓜主持生涯代表作品整理",
+          "老牌節目收攤後主持群未來動向",
+          "觀眾/鄉親對節目收攤的不捨反應整理",
+          "電視台後續補檔規劃與收視率影響分析"
+        ]
+      }
+    };
+    var result = map[event] || {
+      articles: [
+        { title: event + "事件懶人包", type: "懶人包", angle: "整理事件起因、時間軸與各方回應，讓讀者快速掌握全貌" },
+        { title: event + "相關人物背景整理", type: "整理稿", angle: "梳理事件核心人物過往經歷與公開發言，建立脈絡" },
+        { title: event + "背後代表的意義（評論）", type: "評論稿", angle: "從產業趨勢或社會氛圍角度切入，分析此事件為何引發關注" }
+      ],
+      moreDirections: [
+        "相關人物/團隊的最新回應追蹤",
+        "同類型事件的比較與延伸討論",
+        "網友與社群討論聲量整理",
+        "事件對相關產業/圈內生態的影響",
+        "後續發展預測與觀察重點",
+        "資深人士或專家觀點訪談角度"
+      ]
+    };
+
+    // 為每則示範方向補上「示範用」的新聞稿草稿與標題格式，
+    // 純粹用來展示畫面呈現方式，不代表真實內容 —
+    // 實際文字要接上後端 API（Claude + 維基百科）才會依真實資料產生。
+    result.articles = result.articles.map(function(a){
+      a.body = {
+        lead: "【示範格式】這裡會顯示 AI 依維基百科等公開資料整理、改寫後的導言（開門見山、先給結論），" +
+              "實際內容需串接後端服務才會依「" + a.title + "」這個方向即時產生，請勿直接使用本示範文字。",
+        sections: [
+          { heading: "示範小標一", content: "這裡會顯示第一段重點內容（依重要性排序），實際文字由後端 API 產生。" },
+          { heading: "示範小標二", content: "這裡會顯示第二段重點內容，段落之間彼此獨立、合起來涵蓋完整資訊。" }
+        ]
+      };
+      a.headlines = [
+        { text: "示範短標題一", length: "short" },
+        { text: "示範短標題二", length: "short" },
+        { text: "示範短標題三", length: "short" },
+        { text: "示範短標題四", length: "short" },
+        { text: "示範短標題五", length: "short" },
+        { text: "示範長標題範例一（約25字左右）", length: "long" },
+        { text: "示範長標題範例二（約25字左右）", length: "long" },
+        { text: "示範長標題範例三（約25字左右）", length: "long" },
+        { text: "示範長標題範例四（約25字左右）", length: "long" },
+        { text: "示範長標題範例五（約25字左右）", length: "long" }
+      ];
+      return a;
+    });
+
+    return result;
+  }
+
+  $("demoBtn").addEventListener("click", function(){
+    var event = ($("eventInput").value || "").trim() || "吳宗憲離婚";
+    hideMsgs();
+    showInfo("目前顯示的是範例資料，尚未呼叫後端服務。請設定後端網址後使用「產生專題方向」取得即時內容。");
+    lastEvent = event;
+    lastData = DEMO_DATA(event);
+    renderResults(lastData);
+  });
+
+  $("generateBtn").addEventListener("click", function(){
+    var event = ($("eventInput").value || "").trim();
+    hideMsgs();
+    if (!event) {
+      showError("請先輸入熱事件關鍵字。");
+      return;
+    }
+    if (!backendUrl) {
+      showError("尚未設定後端服務網址，請展開上方「後端服務設定」填入網址並套用，或先點選「看範例」。");
+      return;
+    }
+
+    results.classList.remove("show");
+    loadingRow.classList.add("show");
+    $("generateBtn").disabled = true;
+
+    fetch(backendUrl + "/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: event })
+    })
+      .then(function(res){
+        if (!res.ok) {
+          return res.text().then(function(t){
+            throw new Error("後端回應錯誤（狀態碼 " + res.status + "）：" + t.slice(0,200));
+          });
+        }
+        return res.json();
+      })
+      .then(function(data){
+        lastEvent = event;
+        lastData = data;
+        renderResults(data);
+      })
+      .catch(function(err){
+        showError("產生失敗：" + err.message);
+      })
+      .finally(function(){
+        loadingRow.classList.remove("show");
+        $("generateBtn").disabled = false;
+      });
+  });
+
+})();
+</script>
+
+</body>
+</html>
