@@ -499,13 +499,26 @@ function pick(obj, keys) {
 const CONCERT_URL = "https://cloud.culture.tw/frontsite/trans/SearchShowAction.do?method=doFindTypeJ&category=17";
 const CITY_RE = /^(臺北市|台北市|新北市|桃園市|臺中市|台中市|臺南市|台南市|高雄市|基隆市|新竹市|新竹縣|苗栗縣|彰化縣|南投縣|雲林縣|嘉義市|嘉義縣|屏東縣|宜蘭縣|花蓮縣|臺東縣|台東縣|澎湖縣|金門縣|連江縣)/;
 
+function monthRange(month) {
+  // month 為 2026-11 這種格式，回傳該月第一天與最後一天
+  const [y, m] = month.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return [`${y}-${String(m).padStart(2, "0")}-01`, `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`];
+}
+
 app.get("/api/data/concerts", async (req, res) => {
-  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 60, 7), 365);
+  let from, to;
+  if (/^\d{4}-\d{2}$/.test(String(req.query.month || ""))) {
+    [from, to] = monthRange(String(req.query.month));
+  } else {
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 60, 7), 365);
+    from = taipeiToday();
+    to = addDays(from, days);
+  }
   try {
     const raw = await fetchJsonCached(CONCERT_URL, 30000);
     const list = Array.isArray(raw) ? raw : [];
-    const from = taipeiToday();
-    const to = addDays(from, days);
+    const seen = new Set();
     const shows = [];
     for (const ev of list) {
       const infos = Array.isArray(ev.showInfo) ? ev.showInfo : [];
@@ -514,7 +527,7 @@ app.get("/api/data/concerts", async (req, res) => {
         if (!date || date < from || date > to) continue;
         const address = String(s.location || "").trim();
         const cm = address.replace(/^\d{3,6}\s*/, "").match(CITY_RE);
-        shows.push({
+        const item = {
           title: String(ev.title || "").trim(),
           date,
           time: (String(s.time || "").match(/\d{1,2}:\d{2}/) || [""])[0],
@@ -522,98 +535,142 @@ app.get("/api/data/concerts", async (req, res) => {
           city: cm ? cm[1].replace(/^台/, "臺") : "其他",
           price: String(s.price || "").trim(),
           url: ev.sourceWebPromote || ev.webSales || "",
-        });
+        };
+        const key = item.title + "|" + item.date + "|" + item.venue;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        shows.push(item);
       }
     }
     shows.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-    res.json({
-      source: "文化部文化資料開放服務網",
-      from,
-      to,
-      events: list.length,
-      shows,
-    });
+    res.json({ source: "文化部文化資料開放服務網", from, to, events: list.length, shows });
   } catch (err) {
     console.error("[演唱會資料抓取失敗]", err);
     res.status(502).json({ error: "抓不到文化部演唱會資料：" + err.message });
   }
 });
 
+// 從演唱會活動名稱取出藝人名稱，讓月曆格子放得下
+const ARTIST_SYSTEM = `你是娛樂新聞編輯。使用者會給一串演唱會活動名稱（含編號），請從每個名稱取出「演出藝人或團體」的名稱，給社群月曆使用。
+規則：
+1. 使用台灣媒體常用的藝人名稱（中文藝名或通用譯名；英文、韓文團名保留常用寫法，如 BLACKPINK、TWICE）。
+2. 盡量不超過 8 個字；名稱太長時用台灣媒體常用的簡稱。
+3. 多組藝人的音樂節或聯合演出，寫活動簡稱，例如「簡單生活節」「多組藝人」。
+4. 名稱裡看不出演出者時，把活動名稱縮短到 8 個字內，不可捏造藝人。
+請透過 return_artists 工具回傳，每個編號都要有一筆。`;
+
+const ARTIST_TOOL = {
+  name: "return_artists",
+  description: "回傳每個活動編號對應的藝人名稱",
+  input_schema: {
+    type: "object",
+    properties: {
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { i: { type: "integer" }, artist: { type: "string" } },
+          required: ["i", "artist"],
+        },
+      },
+    },
+    required: ["items"],
+  },
+};
+
+app.post("/api/artists", async (req, res) => {
+  const titles = Array.isArray(req.body && req.body.titles) ? req.body.titles : [];
+  const clean = titles.slice(0, 200).map((t) => String(t || "").slice(0, 120).trim());
+  if (!clean.length) return res.status(400).json({ error: "請提供活動名稱" });
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: "後端尚未設定 ANTHROPIC_API_KEY，請通知系統管理員" });
+  }
+  try {
+    const result = await createStructured(
+      {
+        model: MODEL,
+        max_tokens: 6000,
+        system: ARTIST_SYSTEM,
+        tools: [ARTIST_TOOL],
+        messages: [{ role: "user", content: clean.map((t, i) => `${i}. ${t}`).join("\n") }],
+      },
+      "return_artists"
+    );
+    const artists = clean.map(() => "");
+    ((result && result.items) || []).forEach((x) => {
+      const i = Number(x && x.i);
+      if (Number.isInteger(i) && i >= 0 && i < artists.length) artists[i] = String(x.artist || "").trim();
+    });
+    res.json({ artists });
+  } catch (err) {
+    console.error("Claude API 呼叫失敗（/api/artists）：", err);
+    res.status(500).json({ error: "呼叫 Claude API 時發生錯誤：" + err.message });
+  }
+});
+
 // ---------------- 電影票房：國家電影及視聽文化中心 全國電影票房統計 ----------------
-const BOX_TOTAL_URL = "https://boxofficetw.tfai.org.tw/OpenData/statistic/since2016";
-const BOX_WEEK_URL = (start) =>
-  `https://boxofficetw.tfai.org.tw/stat/qsl?mode=Week&start=${start}&ascending=false&orderedColumn=Amounts&page=0&size=100&region=all`;
+// 官方網站「電影票房統計」頁面使用的查詢網址，支援週、月、年；orderedColumn 用 Amount（金額）或 Tickets（票數）
+const BOX_QSL = (mode, start, col, size) =>
+  `https://boxofficetw.tfai.org.tw/stat/qsl?mode=${mode}&start=${start}&ascending=false&orderedColumn=${col}&page=0&size=${size}&region=all`;
+const BOX_MODES = { week: "Week", month: "Month", year: "Year" };
 
 function normFilm(x) {
   return {
-    name: String(pick(x, ["Name", "name", "中文片名"]) || "").trim(),
-    releaseDate: toDateStr(pick(x, ["ReleaseDate", "releaseDate", "上映日期"])),
-    country: String(pick(x, ["Country", "Region", "country", "國別地區"]) || "").trim(),
-    distributor: String(pick(x, ["Issue", "Applicant", "申請人"]) || "").trim(),
-    theaters: num(pick(x, ["TheaterCount", "theaterCount", "上映院數"])),
-    amount: num(pick(x, ["Amounts", "Amount", "WeekAmounts", "銷售金額"])),
-    tickets: num(pick(x, ["Tickets", "Ticket", "WeekTickets", "銷售票數"])),
-    totalAmount: num(pick(x, ["TotalAmounts", "TotalAmount", "累計銷售金額"])),
-    totalTickets: num(pick(x, ["TotalTickets", "TotalTicket", "累計銷售票數"])),
+    name: String(x.name || "").trim(),
+    releaseDate: toDateStr(x.releaseDate),
+    country: String(x.region || "").trim(),
+    distributor: String(x.distributor || "").trim(),
+    theaters: num(x.theaterCount),
+    amount: num(x.amount),
+    tickets: num(x.tickets),
+    totalAmount: num(x.totalAmount),
+    totalTickets: num(x.totalTickets),
+    amountRate: typeof x.amountRate === "number" ? x.amountRate : null,
   };
-}
-function listOf(raw) {
-  if (Array.isArray(raw)) return raw;
-  return (raw && (raw.List || raw.list || raw.Data || raw.data)) || [];
 }
 function mondayOf(dateStr) {
   const d = new Date(dateStr + "T00:00:00Z");
   const wd = (d.getUTCDay() + 6) % 7; // 週一＝0
   return addDays(dateStr, -wd);
 }
+async function fetchBox(mode, start, col, size) {
+  const raw = await fetchJsonCached(BOX_QSL(BOX_MODES[mode], start, col, size), 30000);
+  if (!raw || raw.success === false || !raw.data) throw new Error((raw && raw.message) || "來源沒有回傳資料");
+  return raw.data;
+}
 
 app.get("/api/data/boxoffice", async (req, res) => {
-  const mode = ["week", "recent", "year"].includes(req.query.mode) ? req.query.mode : "week";
+  const mode = BOX_MODES[req.query.mode] ? req.query.mode : "week";
+  const col = req.query.metric === "tickets" ? "Tickets" : "Amount";
   const size = Math.min(Math.max(parseInt(req.query.size, 10) || 10, 3), 20);
+  const today = taipeiToday();
+  let start = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.start || "")) ? String(req.query.start) : "";
+  if (mode === "week") start = mondayOf(start || today);
+  if (mode === "month") start = (start || today).slice(0, 7) + "-01";
+  if (mode === "year") start = (start || today).slice(0, 4) + "-01-01";
   try {
-    if (mode === "week") {
-      // 票房每週一由戲院上傳、隔幾天公布，所以從上週開始往前找，最多找 4 週
-      let start = addDays(mondayOf(taipeiToday()), -7);
-      for (let i = 0; i < 4; i++, start = addDays(start, -7)) {
-        let raw;
-        try {
-          raw = await fetchJsonCached(BOX_WEEK_URL(start), 25000);
-        } catch (e) {
-          if (i === 0) console.warn("[週票房抓取失敗]", e.message);
-          continue;
-        }
-        const films = listOf(raw).map(normFilm).filter((f) => f.name && f.amount > 0);
-        if (!films.length) continue;
-        films.sort((a, b) => b.amount - a.amount);
-        return res.json({
-          source: "國家電影及視聽文化中心 全國電影票房統計",
-          mode,
-          start: toDateStr(raw.Start) || start,
-          end: toDateStr(raw.End) || addDays(start, 6),
-          total: films.reduce((s, f) => s + f.amount, 0),
-          items: films.slice(0, size),
-        });
-      }
-      return res.status(502).json({ error: "暫時抓不到週票房，請改選「近期上映累計」或「今年上映累計」。" });
-    }
-
-    const raw = await fetchJsonCached(BOX_TOTAL_URL, 60000);
-    const end = toDateStr(raw && raw.End) || taipeiToday();
-    let films = listOf(raw).map(normFilm).filter((f) => f.name && f.releaseDate);
-    if (mode === "recent") {
-      const since = addDays(end, -35);
-      films = films.filter((f) => f.releaseDate >= since && f.releaseDate <= end);
-    } else {
-      const y = end.slice(0, 4);
-      films = films.filter((f) => f.releaseDate.slice(0, 4) === y);
-    }
-    films.sort((a, b) => b.totalAmount - a.totalAmount);
+    const d = await fetchBox(mode, start, col, size);
+    // 最新已公布的一週，用來標示「統計至」日期（本月、今年還沒結束時）
+    let cutoff = "";
+    try {
+      const latest = await fetchBox("week", mondayOf(today), "Amount", 1);
+      cutoff = toDateStr(latest.end);
+    } catch (e) {}
+    const end = toDateStr(d.end);
     res.json({
       source: "國家電影及視聽文化中心 全國電影票房統計",
       mode,
-      start: mode === "recent" ? addDays(end, -35) : end.slice(0, 4) + "-01-01",
+      metric: col === "Tickets" ? "tickets" : "amount",
+      start: toDateStr(d.start) || start,
       end,
-      items: films.slice(0, size),
+      cutoff: cutoff && cutoff < end ? cutoff : end,
+      fallback: !!d.fallback, // true 代表指定的那一週還沒公布，改給最近一週
+      summary: {
+        totalAmount: num(d.summary && d.summary.totalAmount),
+        totalTickets: num(d.summary && d.summary.totalTickets),
+        count: num(d.summary && d.summary.totalCount),
+      },
+      items: (d.dataItems || []).map(normFilm).filter((f) => f.name),
     });
   } catch (err) {
     console.error("[票房資料抓取失敗]", err);
