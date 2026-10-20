@@ -33,7 +33,10 @@ app.use(
 );
 
 const PORT = process.env.PORT || 3000;
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
+const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
+// claude-sonnet-4-5-20250929 將於 2026/11/30 停用，預設已改用新版模型；
+// 若新版模型代號無法使用（回傳 404），會自動改用舊版再試一次。
+const FALLBACK_MODEL = "claude-sonnet-4-5-20250929";
 // 注意：模型代號可能隨時間更新，請至
 // https://docs.claude.com/en/docs/about-claude/models 確認目前可用的模型代號，
 // 並視需要修改上面這行或設定 ANTHROPIC_MODEL 環境變數。
@@ -47,6 +50,18 @@ if (!process.env.ANTHROPIC_API_KEY) {
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
+
+async function createMessage(params) {
+  try {
+    return await anthropic.messages.create(params);
+  } catch (err) {
+    if (err && err.status === 404 && params.model !== FALLBACK_MODEL) {
+      console.warn("[模型無法使用，改用備用模型]", params.model, "→", FALLBACK_MODEL);
+      return anthropic.messages.create({ ...params, model: FALLBACK_MODEL });
+    }
+    throw err;
+  }
+}
 
 // ------------------------------------------------------------------
 // 維基百科查詢：抓取與熱事件相關的公開資料，當作寫稿素材（避免模型憑空捏造細節）
@@ -246,7 +261,7 @@ app.post("/api/generate", async (req, res) => {
       `3. 每則稿件方向剛好10則SEO建議標題（headlines：5則short＋5則long，ETtoday風格）\n` +
       `4. 至少5則更多延伸出稿方向（moreDirections）`;
 
-    const message = await anthropic.messages.create({
+    const message = await createMessage({
       model: MODEL,
       max_tokens: 8000,
       system: SYSTEM_PROMPT,
@@ -376,14 +391,14 @@ app.post("/api/write", async (req, res) => {
     let searched = false;
     if (tool.search) {
       try {
-        message = await anthropic.messages.create({ ...params, tools: [WEB_SEARCH_TOOL] });
+        message = await createMessage({ ...params, tools: [WEB_SEARCH_TOOL] });
         searched = true;
       } catch (err) {
         console.warn("[網路搜尋無法使用，改為不搜尋]", err.message);
       }
     }
     if (!message) {
-      message = await anthropic.messages.create(params);
+      message = await createMessage(params);
     }
 
     const text = extractFinalText(message.content || []);
@@ -393,6 +408,254 @@ app.post("/api/write", async (req, res) => {
     res.json({ tool: toolId, text, searched });
   } catch (err) {
     console.error("Claude API 呼叫失敗（/api/write）：", err);
+    res.status(500).json({ error: "呼叫 Claude API 時發生錯誤：" + err.message });
+  }
+});
+
+// ------------------------------------------------------------------
+// 群群15號 v2：數據圖卡（政府開放資料）＋新聞圖卡（AI 產生圖卡文字）
+// ------------------------------------------------------------------
+
+// 共用：抓 JSON（含逾時）並快取，避免每次都打政府網站
+const DATA_CACHE = new Map();
+const DATA_CACHE_MS = 6 * 60 * 60 * 1000; // 6 小時
+
+async function fetchJsonCached(url, ms) {
+  const hit = DATA_CACHE.get(url);
+  if (hit && Date.now() - hit.at < DATA_CACHE_MS) return hit.data;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms || 25000);
+  try {
+    const r = await fetch(url, {
+      signal: controller.signal,
+      headers: { "User-Agent": "Mozilla/5.0 (newsroom-tool)", Accept: "application/json,*/*" },
+    });
+    if (!r.ok) throw new Error("來源網站回應 " + r.status);
+    const text = await r.text();
+    const data = JSON.parse(text.replace(/^﻿/, ""));
+    DATA_CACHE.set(url, { at: Date.now(), data });
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function toDateStr(v) {
+  // 接受 2026/10/05、2026-10-05、2026-10-05T00:00:00 等格式，統一成 2026-10-05
+  if (!v) return "";
+  const m = String(v).match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+  if (!m) return "";
+  return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+}
+function taipeiToday() {
+  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function num(v) {
+  if (v === null || v === undefined || v === "") return 0;
+  const n = Number(String(v).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+function pick(obj, keys) {
+  for (const k of keys) if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
+  return undefined;
+}
+
+// ---------------- 演唱會：文化部文化資料開放服務網（類別 17＝演唱會） ----------------
+const CONCERT_URL = "https://cloud.culture.tw/frontsite/trans/SearchShowAction.do?method=doFindTypeJ&category=17";
+const CITY_RE = /^(臺北市|台北市|新北市|桃園市|臺中市|台中市|臺南市|台南市|高雄市|基隆市|新竹市|新竹縣|苗栗縣|彰化縣|南投縣|雲林縣|嘉義市|嘉義縣|屏東縣|宜蘭縣|花蓮縣|臺東縣|台東縣|澎湖縣|金門縣|連江縣)/;
+
+app.get("/api/data/concerts", async (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 60, 7), 365);
+  try {
+    const raw = await fetchJsonCached(CONCERT_URL, 30000);
+    const list = Array.isArray(raw) ? raw : [];
+    const from = taipeiToday();
+    const to = addDays(from, days);
+    const shows = [];
+    for (const ev of list) {
+      const infos = Array.isArray(ev.showInfo) ? ev.showInfo : [];
+      for (const s of infos) {
+        const date = toDateStr(s.time);
+        if (!date || date < from || date > to) continue;
+        const address = String(s.location || "").trim();
+        const cm = address.replace(/^\d{3,6}\s*/, "").match(CITY_RE);
+        shows.push({
+          title: String(ev.title || "").trim(),
+          date,
+          time: (String(s.time || "").match(/\d{1,2}:\d{2}/) || [""])[0],
+          venue: String(s.locationName || "").trim(),
+          city: cm ? cm[1].replace(/^台/, "臺") : "其他",
+          price: String(s.price || "").trim(),
+          url: ev.sourceWebPromote || ev.webSales || "",
+        });
+      }
+    }
+    shows.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+    res.json({
+      source: "文化部文化資料開放服務網",
+      from,
+      to,
+      events: list.length,
+      shows,
+    });
+  } catch (err) {
+    console.error("[演唱會資料抓取失敗]", err);
+    res.status(502).json({ error: "抓不到文化部演唱會資料：" + err.message });
+  }
+});
+
+// ---------------- 電影票房：國家電影及視聽文化中心 全國電影票房統計 ----------------
+const BOX_TOTAL_URL = "https://boxofficetw.tfai.org.tw/OpenData/statistic/since2016";
+const BOX_WEEK_URL = (start) =>
+  `https://boxofficetw.tfai.org.tw/stat/qsl?mode=Week&start=${start}&ascending=false&orderedColumn=Amounts&page=0&size=100&region=all`;
+
+function normFilm(x) {
+  return {
+    name: String(pick(x, ["Name", "name", "中文片名"]) || "").trim(),
+    releaseDate: toDateStr(pick(x, ["ReleaseDate", "releaseDate", "上映日期"])),
+    country: String(pick(x, ["Country", "Region", "country", "國別地區"]) || "").trim(),
+    distributor: String(pick(x, ["Issue", "Applicant", "申請人"]) || "").trim(),
+    theaters: num(pick(x, ["TheaterCount", "theaterCount", "上映院數"])),
+    amount: num(pick(x, ["Amounts", "Amount", "WeekAmounts", "銷售金額"])),
+    tickets: num(pick(x, ["Tickets", "Ticket", "WeekTickets", "銷售票數"])),
+    totalAmount: num(pick(x, ["TotalAmounts", "TotalAmount", "累計銷售金額"])),
+    totalTickets: num(pick(x, ["TotalTickets", "TotalTicket", "累計銷售票數"])),
+  };
+}
+function listOf(raw) {
+  if (Array.isArray(raw)) return raw;
+  return (raw && (raw.List || raw.list || raw.Data || raw.data)) || [];
+}
+function mondayOf(dateStr) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  const wd = (d.getUTCDay() + 6) % 7; // 週一＝0
+  return addDays(dateStr, -wd);
+}
+
+app.get("/api/data/boxoffice", async (req, res) => {
+  const mode = ["week", "recent", "year"].includes(req.query.mode) ? req.query.mode : "week";
+  const size = Math.min(Math.max(parseInt(req.query.size, 10) || 10, 3), 20);
+  try {
+    if (mode === "week") {
+      // 票房每週一由戲院上傳、隔幾天公布，所以從上週開始往前找，最多找 4 週
+      let start = addDays(mondayOf(taipeiToday()), -7);
+      for (let i = 0; i < 4; i++, start = addDays(start, -7)) {
+        let raw;
+        try {
+          raw = await fetchJsonCached(BOX_WEEK_URL(start), 25000);
+        } catch (e) {
+          if (i === 0) console.warn("[週票房抓取失敗]", e.message);
+          continue;
+        }
+        const films = listOf(raw).map(normFilm).filter((f) => f.name && f.amount > 0);
+        if (!films.length) continue;
+        films.sort((a, b) => b.amount - a.amount);
+        return res.json({
+          source: "國家電影及視聽文化中心 全國電影票房統計",
+          mode,
+          start: toDateStr(raw.Start) || start,
+          end: toDateStr(raw.End) || addDays(start, 6),
+          total: films.reduce((s, f) => s + f.amount, 0),
+          items: films.slice(0, size),
+        });
+      }
+      return res.status(502).json({ error: "暫時抓不到週票房，請改選「近期上映累計」或「今年上映累計」。" });
+    }
+
+    const raw = await fetchJsonCached(BOX_TOTAL_URL, 60000);
+    const end = toDateStr(raw && raw.End) || taipeiToday();
+    let films = listOf(raw).map(normFilm).filter((f) => f.name && f.releaseDate);
+    if (mode === "recent") {
+      const since = addDays(end, -35);
+      films = films.filter((f) => f.releaseDate >= since && f.releaseDate <= end);
+    } else {
+      const y = end.slice(0, 4);
+      films = films.filter((f) => f.releaseDate.slice(0, 4) === y);
+    }
+    films.sort((a, b) => b.totalAmount - a.totalAmount);
+    res.json({
+      source: "國家電影及視聽文化中心 全國電影票房統計",
+      mode,
+      start: mode === "recent" ? addDays(end, -35) : end.slice(0, 4) + "-01-01",
+      end,
+      items: films.slice(0, size),
+    });
+  } catch (err) {
+    console.error("[票房資料抓取失敗]", err);
+    res.status(502).json({ error: "抓不到全國電影票房資料：" + err.message });
+  }
+});
+
+// ---------------- 新聞圖卡：依標題與內文產生快訊條、副標與貼文 ----------------
+const CARD_SYSTEM = `你是 ETtoday 星光雲的資深社群小編，負責把新聞做成社群圖卡的文字。
+圖卡版型：照片下方一條黃色標題條，再下面兩行副標。
+請依使用者提供的新聞標題與內文，產出 3 組不同切角的圖卡文字，並寫一段社群貼文文案。
+
+規則：
+1. headline（黃色標題條主句）：抓最核心的事實，最多 11 個字（含數字與標點），常用句型如「賴薇如41歲懷孕了！」。前面的「快訊／」等標籤由系統加上，不要自己寫。
+2. line1、line2（兩行副標）：補充最吸睛的細節，每行最多 13 個字，兩行不要重複 headline 的資訊。範例：「10秒就出現兩條線」「試管外孕後驚喜自然受孕」。
+3. 只能使用提供內容裡的事實，不可捏造數字、引語或細節；人名、作品名以原文為準。
+4. 使用台灣繁體中文與全形標點，不加 emoji，不用「震驚」「驚呆」這類空泛誇大字眼。
+5. caption（社群貼文文案）：2 到 3 句，口語但不浮誇，最後一句可引導讀者點連結看完整新聞，不要加 hashtag。
+請透過 return_card_text 工具回傳，不要用一般文字回覆。`;
+
+const CARD_TOOL = {
+  name: "return_card_text",
+  description: "回傳新聞圖卡文字與社群貼文",
+  input_schema: {
+    type: "object",
+    properties: {
+      options: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        items: {
+          type: "object",
+          properties: {
+            headline: { type: "string", description: "黃色標題條主句，最多 11 字" },
+            line1: { type: "string", description: "第一行副標，最多 13 字" },
+            line2: { type: "string", description: "第二行副標，最多 13 字" },
+          },
+          required: ["headline", "line1", "line2"],
+        },
+      },
+      caption: { type: "string", description: "社群貼文文案，2 到 3 句" },
+    },
+    required: ["options", "caption"],
+  },
+};
+
+app.post("/api/card", async (req, res) => {
+  const title = (req.body && req.body.title ? String(req.body.title) : "").trim();
+  const content = (req.body && req.body.content ? String(req.body.content) : "").trim();
+  if (!title && !content) return res.status(400).json({ error: "請提供新聞標題或內文" });
+  if (title.length + content.length > WRITE_MAX_INPUT) {
+    return res.status(400).json({ error: "內容太長（上限 " + WRITE_MAX_INPUT + " 字）" });
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: "後端尚未設定 ANTHROPIC_API_KEY，請通知系統管理員" });
+  }
+  try {
+    const message = await createMessage({
+      model: MODEL,
+      max_tokens: 1500,
+      system: CARD_SYSTEM,
+      tools: [CARD_TOOL],
+      tool_choice: { type: "tool", name: "return_card_text" },
+      messages: [{ role: "user", content: `新聞標題：${title || "（未提供）"}\n\n新聞內文：\n${content || "（未提供）"}` }],
+    });
+    const toolUse = (message.content || []).find((b) => b.type === "tool_use");
+    if (!toolUse || !Array.isArray(toolUse.input.options) || !toolUse.input.options.length) {
+      return res.status(502).json({ error: "模型未回傳預期格式，請再試一次" });
+    }
+    res.json(toolUse.input);
+  } catch (err) {
+    console.error("Claude API 呼叫失敗（/api/card）：", err);
     res.status(500).json({ error: "呼叫 Claude API 時發生錯誤：" + err.message });
   }
 });
