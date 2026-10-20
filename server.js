@@ -63,6 +63,38 @@ async function createMessage(params) {
   }
 }
 
+// 要求模型用指定工具回傳固定格式的資料。
+// 新版模型不接受「強制使用某個工具」（tool_choice: tool），遇到時改成讓模型自行選擇（auto），
+// 並由系統提示要求它使用工具；若模型改用文字回覆，就從文字裡找出 JSON。
+let forcedToolUnsupported = false; // 記住模型不支援強制工具，之後直接用 auto，省一次請求
+async function createStructured(params, toolName) {
+  let message;
+  try {
+    message = await createMessage({
+      ...params,
+      tool_choice: forcedToolUnsupported ? { type: "auto" } : { type: "tool", name: toolName },
+    });
+  } catch (err) {
+    const msg = String((err && err.message) || "");
+    if (err && err.status === 400 && /tool_choice/.test(msg) && !forcedToolUnsupported) {
+      forcedToolUnsupported = true;
+      message = await createMessage({ ...params, tool_choice: { type: "auto" } });
+    } else {
+      throw err;
+    }
+  }
+  const blocks = (message && message.content) || [];
+  const toolUse = blocks.find((b) => b.type === "tool_use" && b.name === toolName);
+  if (toolUse && toolUse.input) return toolUse.input;
+  const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(text.slice(start, end + 1)); } catch (e) {}
+  }
+  return null;
+}
+
 // ------------------------------------------------------------------
 // 維基百科查詢：抓取與熱事件相關的公開資料，當作寫稿素材（避免模型憑空捏造細節）
 // ------------------------------------------------------------------
@@ -261,22 +293,20 @@ app.post("/api/generate", async (req, res) => {
       `3. 每則稿件方向剛好10則SEO建議標題（headlines：5則short＋5則long，ETtoday風格）\n` +
       `4. 至少5則更多延伸出稿方向（moreDirections）`;
 
-    const message = await createMessage({
-      model: MODEL,
-      max_tokens: 8000,
-      system: SYSTEM_PROMPT,
-      tools: [TOOL_SCHEMA],
-      tool_choice: { type: "tool", name: "return_topic_directions" },
-      messages: [{ role: "user", content: userMessage }],
-    });
+    const result = await createStructured(
+      {
+        model: MODEL,
+        max_tokens: 8000,
+        system: SYSTEM_PROMPT,
+        tools: [TOOL_SCHEMA],
+        messages: [{ role: "user", content: userMessage }],
+      },
+      "return_topic_directions"
+    );
 
-    const toolUse = message.content.find((block) => block.type === "tool_use");
-
-    if (!toolUse) {
+    if (!result) {
       return res.status(502).json({ error: "模型未回傳預期格式，請稍後再試" });
     }
-
-    const result = toolUse.input;
 
     // 基本防呆：確保至少有 3 則稿件與 5 則延伸方向，且每則稿件都有草稿與標題
     if (!Array.isArray(result.articles) || result.articles.length < 3) {
@@ -641,19 +671,20 @@ app.post("/api/card", async (req, res) => {
     return res.status(500).json({ error: "後端尚未設定 ANTHROPIC_API_KEY，請通知系統管理員" });
   }
   try {
-    const message = await createMessage({
-      model: MODEL,
-      max_tokens: 1500,
-      system: CARD_SYSTEM,
-      tools: [CARD_TOOL],
-      tool_choice: { type: "tool", name: "return_card_text" },
-      messages: [{ role: "user", content: `新聞標題：${title || "（未提供）"}\n\n新聞內文：\n${content || "（未提供）"}` }],
-    });
-    const toolUse = (message.content || []).find((b) => b.type === "tool_use");
-    if (!toolUse || !Array.isArray(toolUse.input.options) || !toolUse.input.options.length) {
+    const result = await createStructured(
+      {
+        model: MODEL,
+        max_tokens: 2000,
+        system: CARD_SYSTEM,
+        tools: [CARD_TOOL],
+        messages: [{ role: "user", content: `新聞標題：${title || "（未提供）"}\n\n新聞內文：\n${content || "（未提供）"}` }],
+      },
+      "return_card_text"
+    );
+    if (!result || !Array.isArray(result.options) || !result.options.length) {
       return res.status(502).json({ error: "模型未回傳預期格式，請再試一次" });
     }
-    res.json(toolUse.input);
+    res.json({ options: result.options, caption: result.caption || "" });
   } catch (err) {
     console.error("Claude API 呼叫失敗（/api/card）：", err);
     res.status(500).json({ error: "呼叫 Claude API 時發生錯誤：" + err.message });
